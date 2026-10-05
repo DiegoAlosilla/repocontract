@@ -1,0 +1,22 @@
+{
+  "url": "https://github.com/swagger-api/swagger-petstore/blob/master/src/main/resources/openapi.yaml",
+  "testedAt": "2026-10-05T04:29:45.355Z",
+  "button": "Ver API",
+  "title": "Swagger Petstore - OpenAPI 3.0 1.0.29-SNAPSHOT OAS 3.0",
+  "operations": 19,
+  "revision": "master · d57941e8fe95 · OpenAPI 3.0.4",
+  "source": "https://github.com/swagger-api/swagger-petstore/blob/d57941e8fe959e508796b27469b1e8bba73392dc/src/main/resources/openapi.yaml",
+  "expanded": 1,
+  "tryItOut": 0,
+  "codeRestored": true,
+  "newTabTitle": "Swagger Petstore - OpenAPI 3.0 1.0.29-SNAPSHOT OAS 3.0",
+  "navigation": {
+    "url": "https://github.com/swagger-api/swagger-petstore/blob/master/inflector.yaml",
+    "phase": "unrelated",
+    "noControls": true,
+    "noViewer": true
+  },
+  "forbiddenRequests": [],
+  "pageErrors": [],
+  "ok": true
+}

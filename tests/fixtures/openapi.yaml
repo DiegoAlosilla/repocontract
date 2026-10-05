@@ -1,0 +1,47 @@
+openapi: 3.0.4
+info:
+  title: Mascotas de prueba
+  version: '1.0'
+  description: Un contrato local con parámetros, cuerpos, respuestas y modelos.
+servers:
+  - url: https://never-call.example/api
+paths:
+  /pets/{id}:
+    get:
+      operationId: getPet
+      summary: Obtener mascota
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Mascota encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+  /pets:
+    post:
+      summary: Crear mascota
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pet'
+      responses:
+        '201':
+          description: Mascota creada
+components:
+  schemas:
+    Pet:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        age:
+          type: integer
