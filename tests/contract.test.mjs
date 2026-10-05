@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseContract, MAX_BYTES } from '../src/contract.js';
-import { blobLocation, validateContext, fetchSource } from '../src/github.js';
+import { blobLocation, validateContext, fetchGithubFile, readGithubPage } from '../src/github.js';
 
 const yaml = readFileSync(new URL('./fixtures/openapi.yaml', import.meta.url), 'utf8');
 const base = parseContract(yaml, 'api.yaml').spec;
@@ -54,24 +54,50 @@ test('Contexto: rama con slash, ruta con espacios, SHA e intento de otro reposit
   assert.equal(blobLocation('https://github.com/acme/pets/tree/main'), null);
   assert.equal(blobLocation('https://github.com.evil.test/acme/pets/blob/main/api.yaml'), null);
 });
-test('Lectura completa por SHA sin cookies ni autorización en públicos', async () => {
-  const text = await fetchSource(context, undefined, async (url, options) => {
-    assert.match(url, new RegExp(`contents/specs/my%20api.yaml\\?ref=${sha}$`));
-    assert.equal(options.credentials, 'omit'); assert.equal(options.redirect, 'error');
-    assert.equal(options.headers.Authorization, undefined);
-    assert.equal(options.headers.Accept, 'application/vnd.github.raw+json');
-    return new Response(yaml);
-  });
-  assert.equal(text, yaml);
+function githubPage(source = yaml, { ref = context.ref, modern = true, flags = {}, lines = source.split('\n') } = {}) {
+  const blob = { truncated: false, large: false, viewable: true, headerInfo: { lineInfo: { truncatedLoc: String(lines.length) } }, ...flags };
+  const route = { path: context.path, refInfo: { name: ref, currentOid: sha } };
+  const payload = modern ? { codeViewLayoutRoute: route, codeViewBlobLayoutRoute: { ...route, blob }, 'codeViewBlobLayoutRoute.StyledBlob': { rawLines: lines } } : { ...route, blob: { ...blob, rawLines: lines } };
+  return `<html><script type="application/json">${JSON.stringify({ payload }).replaceAll('<', '\\u003c')}</script></html>`;
+}
+const pageUrl = 'https://github.com/acme/pets/blob/feature/api/specs/my%20api.yaml';
+test('Lee datos completos de GitHub actual y del formato anterior, sin usar filas HTML', () => {
+  for (const modern of [true, false]) assert.equal(readGithubPage(githubPage(yaml, { modern }), pageUrl).source, yaml);
+  assert.throws(() => readGithubPage(`<pre>${yaml}</pre>`, pageUrl), /acceso actual/);
 });
-test('Privados: token explícito y errores 401/403/404/límite', async () => {
-  await fetchSource(context, 'test-token', async (_, options) => { assert.equal(options.headers.Authorization, 'Bearer test-token'); return new Response(yaml); });
-  for (const [status, match] of [[401, /caducado/], [403, /SSO/], [404, /privados/], [500, /500/]]) {
-    await assert.rejects(fetchSource(context, null, async () => new Response('', { status })), match);
+test('Rechaza archivo truncado, ausencia de confirmación, líneas incompletas y LFS', () => {
+  for (const flags of [{ truncated: true }, { truncated: undefined }, { large: true }, { viewable: false }]) {
+    assert.throws(() => readGithubPage(githubPage(yaml, { flags }), pageUrl), /no renderiza fragmentos/);
   }
-  await assert.rejects(fetchSource(context, null, async () => new Response('', { status: 403, headers: { 'x-ratelimit-remaining': '0' } })), /límite/);
+  assert.throws(() => readGithubPage(githubPage(yaml, { flags: { headerInfo: { lineInfo: { truncatedLoc: '999' } } } }), pageUrl), /líneas/);
+  assert.throws(() => readGithubPage(githubPage(yaml, { flags: { headerInfo: { isGitLfs: true } } }), pageUrl), /Git LFS/);
+  assert.throws(() => readGithubPage(githubPage(yaml, { lines: [null] }), pageUrl), /fragmentos/);
 });
-test('Corta descargas superiores a 2 MiB, incluso sin Content-Length', async () => {
-  await assert.rejects(fetchSource(context, null, async () => new Response('x', { headers: { 'content-length': String(MAX_BYTES + 1) } })), /2 MiB/);
-  await assert.rejects(fetchSource(context, null, async () => new Response('x'.repeat(MAX_BYTES + 1))), /2 MiB/);
+test('Lectura de la página por SHA con sesión ordinaria, solo GET y sin API', async () => {
+  const file = await fetchGithubFile(pageUrl, async (url, options) => {
+    assert.equal(url, `https://github.com/acme/pets/blob/${sha}/specs/my%20api.yaml`);
+    assert.equal(options.redirect, 'error'); assert.equal(options.method, undefined);
+    assert.deepEqual(options.headers, { Accept: 'text/html' });
+    assert.equal(Object.hasOwn(options, 'credentials'), false);
+    return new Response(githubPage(yaml, { ref: sha }));
+  }, context);
+  assert.equal(file.source, yaml);
+  assert.equal(file.context.ref, 'feature/api');
+});
+test('Sin contexto fresco, obtiene ruta y contenido de la página actual', async () => {
+  const file = await fetchGithubFile(pageUrl, async url => { assert.equal(url, pageUrl); return new Response(githubPage()); });
+  assert.equal(file.context.sha, sha);
+  assert.equal(file.source, yaml);
+});
+test('Errores de acceso y de red no solicitan mayor acceso', async () => {
+  for (const status of [401, 403, 404, 429, 500]) await assert.rejects(fetchGithubFile(pageUrl, async () => new Response('', { status })), /acceso actual/);
+  await assert.rejects(fetchGithubFile(pageUrl, async () => { throw new Error('offline'); }), /puedes abrirlo/);
+  await assert.rejects(fetchGithubFile(pageUrl, async () => new Response('<html>Sign in</html>')), /acceso actual/);
+  await assert.rejects(fetchGithubFile('https://evil.test/acme/pets/blob/main/api.yaml'), /github.com/);
+});
+test('Límites del documento y de la página, incluso sin Content-Length', async () => {
+  assert.throws(() => readGithubPage(githubPage('x'.repeat(MAX_BYTES + 1)), pageUrl), /2 MiB/);
+  const maxPage = 16 * 1024 * 1024;
+  await assert.rejects(fetchGithubFile(pageUrl, async () => new Response('x', { headers: { 'content-length': String(maxPage + 1) } })), /16 MiB/);
+  await assert.rejects(fetchGithubFile(pageUrl, async () => new Response('x'.repeat(maxPage + 1))), /16 MiB/);
 });

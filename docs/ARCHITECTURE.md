@@ -1,56 +1,58 @@
-# Arquitectura del MVP
+# Arquitectura del MVP 0.2.0
 
 ```mermaid
 flowchart LR
   G[Archivo abierto en GitHub] --> C[Content script aislado]
-  C -->|Contexto validado| W[Service worker MV3]
-  W -->|GET Contents por commit SHA| A[api.github.com]
-  A -->|Contenido completo| P[Parser y validación local]
-  P --> S[storage.session]
-  C -->|ID de documento| V[iframe de la extensión]
+  C -->|GET por SHA, sesión web ordinaria| H[github.com]
+  H -->|JSON con líneas completas| C
+  C -->|Texto y contexto validados| W[Service worker MV3]
+  W --> P[Parser local]
+  P --> S[storage.session: documentos]
+  C -->|ID de documento| V[iframe de extensión]
   S --> V
   V --> U[Swagger UI local]
   I[Popup del icono] --> C
-  I -->|Token opcional en sesión| W
   C --> T[Visor en nueva pestaña]
   S --> T
 ```
 
 ## Responsabilidades
 
-- `src/content.js`: obtiene owner/repo, ruta, rama/tag y commit de los metadatos JSON de GitHub. Admite las estructuras `codeViewLayoutRoute` y `codeViewBlobRoute`, y un permalink como respaldo. Valida que coincidan con la URL. Solo usa el DOM como fuente de contexto y ubicación visual; nunca como fuente del contrato. Añade controles cuando el documento ha sido reconocido y conserva/restaura el contenedor de código sin reescribirlo.
-- `src/background.js`: valida el origen del mensaje y la URL **actual** de la pestaña (`sender.url` puede quedar en la ruta inicial de una SPA). Construye una URL de API fija, obtiene el contenido, procesa localmente y guarda una sesión acotada. No acepta una URL arbitraria para fetch ni operaciones de escritura. `storage.session` no se expone al content script.
-- `src/github.js`: validación del contexto y transporte GET, con SHA obligatorio, token opcional, timeout, límite incremental de tamaño y errores de acceso/red.
-- `src/contract.js`: YAML 1.2 con claves únicas y límites de alias, JSON, detección de marcador raíz, validación estructural y referencias. Las referencias externas se rechazan antes del renderizado.
-- `src/viewer.html` / `viewer.js` / `viewer.css`: documento de extensión separado del CSS y JavaScript de GitHub. Swagger UI incluido en `dist/vendor`, spec como objeto, sin URL remota, ejecución ni validación remota. CSP del visor bloquea conexiones e imágenes externas, adicional a la CSP global de la extensión que permite la lectura de la API desde el worker.
-- `src/popup.*`: mismas acciones mediante mensajería con la pestaña activa; configuración/eliminación explícita de token.
-- `scripts/build.mjs`: esbuild empaqueta dependencias, copia Swagger UI y sus licencias y genera iconos locales deterministas. No usa código remoto durante ejecución.
+- `src/content.js`: obtiene contexto del JSON/permalink, valida su relación con la URL y lee la página completa. Añade controles al reconocer un contrato y oculta/restaura el código sin reescribirlo. Nunca usa filas visibles o textarea como fuente del contrato.
+- `src/github.js`: valida repositorio, ruta, rama/tag y SHA. GET solo a la página del archivo en github.com, por SHA cuando se conoce. Timeout, rechazo de redirecciones y límite incremental de HTML. Lee `codeViewBlobLayoutRoute.StyledBlob.rawLines` o el formato anterior `blob.rawLines`; exige `truncated: false`, comprueba flags, revisión y número de líneas disponible y limita el documento. El HTML se interpreta como texto/JSON, nunca se monta ni ejecuta.
+- `src/background.js`: valida origen del mensaje y URL **actual** de pestaña (`sender.url` puede retener la primera ruta SPA). Procesa texto y almacena documentos temporales. No hace solicitudes de red ni escrituras en GitHub; no expone storage.session al content script.
+- `src/contract.js`: YAML 1.2 con claves únicas y límites de alias o JSON; detección raíz, validación estructural/referencias y rechazo de referencias externas.
+- `src/viewer.*`: CSS/JavaScript aislados de GitHub. Swagger UI en `dist/vendor` recibe spec como objeto. CSP global y del visor `connect-src 'none'`, imágenes externas bloqueadas y ejecución/validación remota desactivadas.
+- `src/popup.*`: acciones sobre la pestaña activa mediante mensajes; sin configuración de acceso.
+- `scripts/build.mjs`: empaqueta dependencias, copia Swagger UI/licencias y genera iconos locales; sin código remoto durante ejecución.
+
+## Sesión y acceso
+
+Chrome documenta que content scripts hacen solicitudes bajo el origen web de la página. Se usa fetch de github.com a github.com con el comportamiento same-origin ordinario. RepoContract no lee, extrae ni almacena cookies/credenciales, no añade Authorization y no inicia sesión. No convierte la sesión web en otra forma de acceso mediante REST o APIs internas.
+
+REST tiene autenticación propia; no se presupone que acepte el inicio de sesión web. El alcance es la página del archivo abierto. Un error, redirección o contenido incompleto conserva el código y muestra el problema, sin intentar obtener acceso adicional.
+
+La cookie HttpOnly inventada se configura únicamente en el harness de pruebas. Verifica transporte automático de sesión sin agregar APIs de cookies a la extensión. Página privada real, SSO y políticas de organización siguen pendientes.
 
 ## Navegación y concurrencia
 
-GitHub puede conservar `embeddedData` de la primera página durante una navegación React. Cuando ese JSON no coincide con la URL actual, el content script hace un GET de la página actual, usando su sesión web, y extrae solo ruta y revisión de sus bloques JSON. No monta ni ejecuta el HTML recuperado. El contrato siempre se descarga después mediante Contents y su autenticación independiente. Esta recuperación tiene límite de tiempo y también participa del contador de generación.
+GitHub puede conservar embeddedData inicial tras navegar por React. Si el contexto no coincide con la URL, se lee la página actual y se obtiene contexto/contenido de la misma respuesta. Si coincide, se lee por SHA y se verifica revisión. El visor enlaza al permalink recuperado. Se admiten ramas con slash y rutas con espacios.
 
-Un contador de generación invalida el resultado de una lectura cuando cambia la URL, revisión o se fuerza Reintentar. Un MutationObserver con debounce detecta cambios de DOM; eventos Turbo/PJAX y popstate aceleran el seguimiento. Una comprobación de pathname cada 500 ms cubre pushState, que no emite un evento estándar. Esta comprobación no descarga datos. Los controles se reconstruyen si GitHub sustituye su contenedor, sin duplicarlos. La selección de vista vuelve a Código al cambiar de archivo y cualquier panel anterior se retira.
+Un contador de generación descarta lecturas al cambiar URL/revisión o reintentar; también se comprueba la URL antes de enviar texto al worker. MutationObserver con debounce, eventos Turbo/PJAX/popstate y comparación de pathname cada 500 ms siguen SPA. La comprobación periódica no descarga datos. Se reconstruyen controles si GitHub sustituye su contenedor, sin duplicarlos. Cambiar archivo restaura Código y retira el visor anterior.
 
-La revisión recuperada es el commit que GitHub mostraba en sus metadatos. El GET no usa la rama mutable; por ello el visor en otra pestaña enlaza a un permalink por SHA. Las ramas con slash y las rutas con espacios no se dividen suponiendo que el primer segmento es toda la rama.
+Caché con escrituras/rotación serializadas, ocho documentos y aproximadamente 6 MiB; sobrevive a suspensión del worker durante sesión. Instalación/actualización la limpia. Un visor caducado pide reabrir desde GitHub.
 
-La caché de documentos tiene escritura y rotación serializadas, hasta ocho entradas y presupuesto aproximado de 6 MiB. Sobrevive a la suspensión del worker dentro de la sesión de Chrome. No se garantiza conservar pestañas de visor indefinidamente; la caducidad muestra un mensaje para reabrir desde GitHub.
+## Fuentes oficiales
 
-## Decisiones sobre privados
+Consultadas para esta actualización el 5 de octubre de 2026 UTC:
 
-Se usa API Contents con `Accept: application/vnd.github.raw+json` y `ref=<SHA>`. Públicos funcionan sin autorización. Privados requieren token explícito de lectura configurado por el usuario; no se presupone autenticación de la API a partir de cookies. No se lee ni se transfiere el contenido visible de GitHub como sustituto silencioso cuando falla la descarga. Las redirecciones se rechazan para mantener restringido el destino de la solicitud.
-
-## Documentación oficial consultada
-
-Revisada el 4 de octubre de 2026 (America/Lima):
-
-- [Chrome: content scripts y mundos aislados](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts).
-- [Chrome: solicitudes entre orígenes y permisos de host](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests).
-- [Chrome: políticas de seguridad de contenido](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy).
-- [Chrome: código remoto en MV3](https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code).
+- [Chrome: red y origen de content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests).
+- [Chrome: content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts).
+- [Chrome: CSP](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy).
+- [Chrome: código remoto MV3](https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code).
 - [Chrome: storage.session](https://developer.chrome.com/docs/extensions/reference/api/storage).
-- [GitHub: Contents, contenido raw, ref y Contents read para fine-grained tokens](https://docs.github.com/en/rest/repos/contents).
-- [Swagger UI: compatibilidad oficial](https://github.com/swagger-api/swagger-ui#compatibility).
-- [Swagger UI: spec, supportedSubmitMethods, validatorUrl e interceptor](https://swagger.io/docs/open-source-tools/swagger-ui/usage/configuration/).
+- [GitHub: autenticación REST](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api).
+- [Swagger UI: compatibilidad](https://github.com/swagger-api/swagger-ui#compatibility).
+- [Swagger UI: configuración](https://swagger.io/docs/open-source-tools/swagger-ui/usage/configuration/).
 
-El paquete npm consultado e instalado fue `swagger-ui-dist@5.33.1`. La tabla de compatibilidad oficial publicada para 5.x incluye Swagger 2.0, OpenAPI 3.0.4 y 3.1.2. RepoContract limita deliberadamente la detección a 2.0/3.0/3.1 aunque el renderizador declare otras versiones.
+Swagger UI 5.33.1 fijado en lockfile. Detección deliberadamente limitada a Swagger 2.0 y OpenAPI 3.0/3.1.

@@ -5,9 +5,26 @@ import path from 'node:path';
 const browser = await chromium.launchPersistentContext('', { channel: 'chromium', headless: true,
   args: [`--disable-extensions-except=${path.resolve('dist')}`, `--load-extension=${path.resolve('dist')}`] });
 const page = await browser.newPage();
-const errors = [], forbidden = [];
+const errors = [], forbidden = [], sourceRequests = [], githubApiRequests = [];
+const cdp = await browser.newCDPSession(page);
+await cdp.send('Network.enable');
+cdp.on('Network.requestWillBeSent', event => {
+  if (new URL(event.request.url).origin !== 'https://api.github.com') return;
+  const scripts = [];
+  for (let stack = event.initiator.stack; stack; stack = stack.parent) {
+    scripts.push(...stack.callFrames.map(frame => frame.url).filter(Boolean));
+  }
+  githubApiRequests.push({ url: event.request.url, initiatorScripts: [...new Set(scripts)] });
+  if (!scripts.length || scripts.some(url => url.startsWith('chrome-extension://'))) forbidden.push(event.request.url);
+});
 page.on('pageerror', error => errors.push(error.message));
-browser.on('request', req => { if (/validator\.swagger|petstore3?\.swagger|never-call\.example/.test(req.url())) forbidden.push(req.url()); });
+browser.on('request', req => {
+  const url = new URL(req.url());
+  if (url.origin === 'https://github.com' && req.resourceType() === 'fetch' && url.pathname.includes('/blob/')) {
+    sourceRequests.push({ url: req.url(), method: req.method(), authorizationPresent: Boolean(req.headers().authorization) });
+  }
+  if (/validator\.swagger|petstore3?\.swagger|never-call\.example/.test(req.url())) forbidden.push(req.url());
+});
 const report = { url: 'https://github.com/swagger-api/swagger-petstore/blob/master/src/main/resources/openapi.yaml', testedAt: new Date().toISOString() };
 try {
   await page.goto(report.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -54,13 +71,15 @@ try {
   report.navigation = { url: page.url(), phase: finalStatus.phase, noControls: await page.locator('#repocontract-controls').count() === 0, noViewer: await page.locator('#repocontract-frame').count() === 0 };
   report.forbiddenRequests = forbidden;
   report.pageErrors = errors;
-  report.ok = report.operations > 0 && report.codeRestored && report.tryItOut === 0 && forbidden.length === 0 && report.navigation.phase === 'unrelated' && report.navigation.noControls && report.navigation.noViewer;
+  report.ok = report.operations > 0 && report.codeRestored && report.tryItOut === 0 && forbidden.length === 0 && report.navigation.phase === 'unrelated' && report.navigation.noControls && report.navigation.noViewer && sourceRequests.length >= 2 && sourceRequests.every(r => r.method === 'GET' && !r.authorizationPresent);
 } catch (error) {
   report.ok = false; report.error = error.message;
   report.notice = await page.locator('#repocontract-panel').textContent().catch(() => null);
   report.pageErrors = errors;
   await page.screenshot({ path: 'test-results/live-error.png', fullPage: true });
 } finally {
+  report.sourceRequests = sourceRequests;
+  report.githubApiRequests = githubApiRequests;
   await mkdir('test-results', { recursive: true });
   await writeFile('test-results/live-report.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));

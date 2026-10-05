@@ -6,11 +6,7 @@
   <p id="status" role="status">Buscando el archivo abierto…</p>
   <div class="actions"><button id="show" type="button" disabled>Ver API en GitHub</button><button id="open" type="button" disabled>Abrir en otra pestaña ↗</button></div>
   <button id="retry" type="button">Volver a comprobar</button>
-  <details><summary>Acceso a repositorios privados</summary>
-    <p>Usa un token de GitHub con <strong>Contents: read</strong>, limitado a los repositorios que necesitas. La sesión web de GitHub no autentica la API.</p>
-    <form id="credentials"><label for="token">Token personal (opcional)</label><input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"><div class="actions"><button type="submit">Guardar en sesión</button><button id="forget" type="button">Eliminar token</button></div></form>
-    <p id="token-status" role="status"></p><p class="small">Se elimina al cerrar Chrome, recargar o desactivar la extensión. No se sincroniza ni se guarda en disco por RepoContract.</p>
-  </details>
+  <p class="small">Visualiza únicamente el archivo que GitHub permite abrir en esta pestaña.</p>
   <footer>Procesamiento local · Solo lectura · Sin ejecutar endpoints</footer>
   <script src="popup.js"></script>
 </body></html>

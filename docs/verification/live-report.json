@@ -1,6 +1,6 @@
 {
   "url": "https://github.com/swagger-api/swagger-petstore/blob/master/src/main/resources/openapi.yaml",
-  "testedAt": "2026-10-05T04:29:45.355Z",
+  "testedAt": "2026-10-05T05:33:56.405Z",
   "button": "Ver API",
   "title": "Swagger Petstore - OpenAPI 3.0 1.0.29-SNAPSHOT OAS 3.0",
   "operations": 19,
@@ -18,5 +18,30 @@
   },
   "forbiddenRequests": [],
   "pageErrors": [],
-  "ok": true
+  "ok": true,
+  "sourceRequests": [
+    {
+      "url": "https://github.com/swagger-api/swagger-petstore/blob/d57941e8fe959e508796b27469b1e8bba73392dc/src/main/resources/openapi.yaml",
+      "method": "GET",
+      "authorizationPresent": false
+    },
+    {
+      "url": "https://github.com/swagger-api/swagger-petstore/blob/master/inflector.yaml",
+      "method": "GET",
+      "authorizationPresent": false
+    },
+    {
+      "url": "https://github.com/swagger-api/swagger-petstore/blob/master/inflector.yaml",
+      "method": "GET",
+      "authorizationPresent": false
+    }
+  ],
+  "githubApiRequests": [
+    {
+      "url": "https://api.github.com/_private/browser/stats",
+      "initiatorScripts": [
+        "https://github.githubassets.com/assets/app-runtime-7cd940ac0a938481.js"
+      ]
+    }
+  ]
 }

@@ -5,47 +5,49 @@ import { parseContract } from '../../src/contract.js';
 
 const sha = 'a'.repeat(40);
 const yaml = await readFile('tests/fixtures/openapi.yaml', 'utf8');
-const base = { owner: 'acme', repo: 'pets', ref: 'main', sha };
 const v31 = { ...parseContract(yaml).spec, openapi: '3.1.2' };
 v31.components.schemas.Pet.properties.age = { type: ['integer', 'null'] };
 const swagger = { swagger: '2.0', info: { title: 'Mascotas Swagger 2', version: '1' }, paths: {
   '/pets': { get: { parameters: [{ name: 'limit', in: 'query', type: 'integer' }], responses: { '200': { description: 'Lista de mascotas', schema: { $ref: '#/definitions/Pet' } } } } }
 }, definitions: { Pet: { type: 'object', properties: { name: { type: 'string' } } } } };
-function githubHtml(file, ref = 'main', truncated = false) {
-  const payload = { payload: { codeViewBlobRoute: { path: file, repo: { name: 'pets', ownerLogin: 'acme' }, refInfo: { name: ref, currentOid: sha } } } };
+const sources = { 'api.yaml': yaml, 'other.yml': yaml.replace('Mascotas de prueba', 'Otra API'),
+  'config.yaml': 'services:\n  web: {image: nginx}', 'broken.yaml': 'openapi: 3.0.4\ninfo: {}',
+  'private.yaml': yaml, 'denied.yaml': yaml, 'truncated.yaml': yaml, 'late.yaml': yaml,
+  'v31.json': JSON.stringify(v31), 'swagger.json': JSON.stringify(swagger) };
+function githubHtml(file, ref = 'main', partialVisibleCode = false) {
+  const lines = (sources[file] ?? '{}').split('\n');
+  const route = { path: file, refInfo: { name: ref, currentOid: sha } };
+  const payload = { payload: { codeViewLayoutRoute: route,
+    codeViewBlobLayoutRoute: { ...route, blob: { truncated: file === 'truncated.yaml', large: false, viewable: true, headerInfo: { lineInfo: { truncatedLoc: String(lines.length) } } } },
+    'codeViewBlobLayoutRoute.StyledBlob': { rawLines: lines } } };
   return `<!doctype html><html data-color-mode="light"><head><title>GitHub fixture</title></head><body>
     <main><div class="file-header"><div role="group"><a data-testid="raw-button" href="/acme/pets/raw/${sha}/${file}">Raw</a></div></div>
-    <div class="CodeBlob-module__codeBlobWrapper__fixture"><div class="react-code-file-contents"><pre id="code">${truncated ? '# Truncated: only visible first line' : '# Original code remains available'}</pre></div><textarea aria-label="file content" readonly>Virtualized code layer</textarea></div></main>
-    <script type="application/json" data-target="react-app.embeddedData">${JSON.stringify(payload)}</script></body></html>`;
+    <div class="CodeBlob-module__codeBlobWrapper__fixture"><div class="react-code-file-contents"><pre id="code">${partialVisibleCode ? '# Only visible first line' : '# Original code remains available'}</pre></div><textarea aria-label="file content" readonly>Virtualized code layer</textarea></div></main>
+    <script type="application/json" data-target="react-app.embeddedData">${JSON.stringify(payload).replaceAll('<', '\\u003c')}</script></body></html>`;
 }
-let context, worker, extensionId;
+let context, worker, extensionId, sourceRequests, completedReads, apiRequests;
 test.beforeEach(async () => {
   context = await chromium.launchPersistentContext('', { channel: 'chromium', headless: true,
     args: [`--disable-extensions-except=${path.resolve('dist')}`, `--load-extension=${path.resolve('dist')}`] });
   worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
   extensionId = new URL(worker.url()).host;
-  // Test double only for GitHub's API transport. Real Chrome extension messaging,
-  // isolated content script, MV3 CSP, session storage and Swagger UI all run normally.
-  await worker.evaluate(({ yaml, v31, swagger }) => {
-    globalThis.testRequests = [];
-    globalThis.testSources = { 'api.yaml': yaml, 'other.yml': yaml.replace('Mascotas de prueba', 'Otra API'),
-      'config.yaml': 'services:\n  web: {image: nginx}', 'broken.yaml': 'openapi: 3.0.4\ninfo: {}',
-      'private.yaml': yaml, 'late.yaml': yaml.replace('Mascotas de prueba', 'API obsoleta'), 'v31.json': JSON.stringify(v31), 'swagger.json': JSON.stringify(swagger) };
-    globalThis.fetch = async (url, options) => {
-      globalThis.testRequests.push({ url: String(url), headers: options.headers, credentials: options.credentials });
-      const filename = decodeURIComponent(new URL(url).pathname.split('/').at(-1));
-      if (filename === 'late.yaml') await new Promise(r => setTimeout(r, 900));
-      if (filename === 'private.yaml' && !options.headers.Authorization) return new Response('', { status: 404 });
-      return new Response(globalThis.testSources[filename] ?? '{}');
-    };
-  }, { yaml, v31, swagger });
+  sourceRequests = []; completedReads = []; apiRequests = [];
+  await context.route('https://api.github.com/**', async route => { apiRequests.push(route.request().url()); await route.fulfill({ status: 403, body: '' }); });
   await context.route('https://github.com/**', async route => {
     const pathname = new URL(route.request().url()).pathname;
     const file = pathname.split('/').at(-1);
-    await route.fulfill({ contentType: 'text/html', body: githubHtml(file, pathname.includes('feature/api') ? 'feature/api' : 'main', true) });
+    const reading = route.request().resourceType() === 'fetch';
+    if (reading) sourceRequests.push({ url: route.request().url(), headers: route.request().headers() });
+    if (reading && file === 'late.yaml') await new Promise(resolve => setTimeout(resolve, 900));
+    if ((reading && file === 'denied.yaml') || (file === 'private.yaml' && !route.request().headers().cookie?.includes('page_access=yes'))) {
+      await route.fulfill({ status: 404, body: '' }); return;
+    }
+    const ref = pathname.includes('feature/api') ? 'feature/api' : pathname.includes(sha) ? sha : 'main';
+    await route.fulfill({ contentType: 'text/html', body: githubHtml(file, ref, true) });
+    if (reading) completedReads.push(file);
   });
 });
-test.afterEach(async () => { await context.close(); });
+test.afterEach(async () => { expect(apiRequests).toEqual([]); await context.close(); });
 
 test('detección, contenido completo, renderizado, alternancia, modelo, tema y nueva pestaña', async () => {
   const page = await context.newPage();
@@ -82,7 +84,7 @@ test('detección, contenido completo, renderizado, alternancia, modelo, tema y n
   await expect(newPage.locator('.info .title')).toContainText('Mascotas de prueba');
   await expect(newPage.locator('#source')).toHaveAttribute('href', new RegExp(sha));
   expect(external).toEqual([]);
-  expect(await worker.evaluate(() => globalThis.testRequests.length)).toBe(1);
+  expect(sourceRequests).toHaveLength(1);
 });
 
 for (const [file, title, version, count] of [['v31.json', 'Mascotas de prueba', 'OpenAPI 3.1.2', 2], ['swagger.json', 'Mascotas Swagger 2', 'Swagger 2.0', 1]]) {
@@ -124,21 +126,21 @@ test('navegación SPA, rama con slash y eliminación del visor anterior', async 
   await navigate('config.yaml');
   await expect(page.locator('#repocontract-toggle')).toHaveCount(0);
   await expect(page.locator('#repocontract-frame')).toHaveCount(0);
-  await expect.poll(() => worker.evaluate(() => globalThis.testRequests.length)).toBe(3);
+  await expect.poll(() => sourceRequests.length).toBe(3);
 });
 
 test('respuesta tardía de un archivo anterior no inserta controles obsoletos', async () => {
   const page = await context.newPage();
   await page.goto('https://github.com/acme/pets/blob/main/late.yaml');
-  await expect.poll(() => worker.evaluate(() => globalThis.testRequests.length)).toBe(1);
+  await expect.poll(() => sourceRequests.length).toBe(1);
   await page.evaluate(html => {
     history.pushState({}, '', '/acme/pets/blob/main/config.yaml');
     document.body.replaceChildren(...new DOMParser().parseFromString(html, 'text/html').body.childNodes);
     window.dispatchEvent(new Event('turbo:load'));
   }, githubHtml('config.yaml'));
-  await expect.poll(() => worker.evaluate(() => globalThis.testRequests.length)).toBe(2);
-  // Wait for the pending read to be processed, then check both document and DOM.
-  await expect.poll(() => worker.evaluate(async () => Object.keys(await chrome.storage.session.get(null)).filter(k => k.startsWith('document:')).length)).toBe(1);
+  await expect.poll(() => sourceRequests.length).toBe(2);
+  await expect.poll(() => completedReads.includes('late.yaml')).toBe(true);
+  await expect.poll(() => worker.evaluate(async () => Object.keys(await chrome.storage.session.get(null)).filter(k => k.startsWith('document:')).length)).toBe(0);
   await expect(page.locator('#repocontract-controls')).toHaveCount(0);
 });
 
@@ -185,33 +187,38 @@ test('acciones del popup sobre la pestaña activa: vista integrada y nueva pesta
   await expect((await opened).locator('.info .title')).toContainText('Mascotas');
 });
 
-test('privados: 404 sin token, token en sesión, recuperación y popup alternativo', async () => {
+test('archivo privado usa automáticamente la sesión web ordinaria sin configuración adicional', async () => {
+  // This artificial cookie belongs only to the GitHub test server. Production
+  // code neither reads cookies nor sets them; the browser applies its session.
+  await context.addCookies([{ name: 'page_access', value: 'yes', domain: 'github.com', path: '/', secure: true, httpOnly: true }]);
   const page = await context.newPage();
   await page.goto('https://github.com/acme/pets/blob/main/private.yaml');
-  await expect(page.locator('#repocontract-panel')).toContainText('Contents: read');
-  // Open the actual popup page in a tab for testing its controls. Its active GitHub
-  // tab is supplied through Chrome messaging, just as with the toolbar popup.
+  await expect(page.locator('#repocontract-toggle')).toHaveText('Ver API');
+  await page.locator('#repocontract-toggle').click();
+  await expect(page.frameLocator('#repocontract-frame').locator('.info .title')).toContainText('Mascotas');
+  expect(sourceRequests).toHaveLength(1);
+  expect(sourceRequests[0].url).toBe(`https://github.com/acme/pets/blob/${sha}/private.yaml`);
+  expect(sourceRequests[0].headers.cookie).toContain('page_access=yes');
+  expect(sourceRequests[0].headers.authorization).toBeUndefined();
   const popup = await context.newPage();
   await popup.goto(`chrome-extension://${extensionId}/popup.html`);
-  await popup.locator('summary').click();
-  await popup.locator('#token').fill('github_pat_' + 'a'.repeat(40));
-  await popup.locator('button[type="submit"]').click();
-  await expect(popup.locator('#token-status')).toContainText('Token configurado');
-  await page.getByRole('button', { name: 'Reintentar' }).click();
-  await expect(page.locator('#repocontract-toggle')).toHaveText('Ver API');
-  const requests = await worker.evaluate(() => globalThis.testRequests);
-  expect(requests[0].headers.Authorization).toBeUndefined();
-  expect(requests.at(-1).headers.Authorization).toMatch(/^Bearer github_pat_/);
-  expect(requests.at(-1).credentials).toBe('omit');
-  // Exercise the popup using the real tab id; no broad tabs permission required.
-  const tabs = await worker.evaluate(() => chrome.tabs.query({}));
-  const githubTab = tabs.find(t => t.url?.includes('/private.yaml'));
-  const status = await popup.evaluate(id => chrome.tabs.sendMessage(id, { type: 'STATUS' }), githubTab.id);
-  expect(status.phase).toBe('ready');
-  const result = await popup.evaluate(id => chrome.tabs.sendMessage(id, { type: 'SHOW_API' }), githubTab.id);
-  expect(result.ok).toBe(true);
-  await expect(page.frameLocator('#repocontract-frame').locator('.info .title')).toContainText('Mascotas');
-  await popup.locator('#forget').click();
-  await expect(popup.locator('#token-status')).toContainText('Sin token');
-  expect(await worker.evaluate(async () => (await chrome.storage.session.get('githubToken')).githubToken)).toBeUndefined();
+  await expect(popup.locator('input, form, details')).toHaveCount(0);
+  const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
+  expect(manifest.permissions).toEqual(['storage']);
+  expect(manifest.host_permissions).toEqual(['https://github.com/*']);
+  const keys = await worker.evaluate(async () => Object.keys(await chrome.storage.session.get(null)));
+  expect(keys.length).toBe(1);
+  expect(keys.every(key => key.startsWith('document:'))).toBe(true);
 });
+
+for (const [file, message] of [['denied.yaml', 'acceso actual'], ['truncated.yaml', 'no entrega el archivo completo']]) {
+  test(`rechaza ${file} y conserva el código sin ampliar acceso ni renderizar fragmentos`, async () => {
+    const page = await context.newPage();
+    await page.goto(`https://github.com/acme/pets/blob/main/${file}`);
+    await expect(page.locator('#repocontract-panel')).toContainText(message);
+    await expect(page.locator('#repocontract-toggle')).toHaveCount(0);
+    await expect(page.locator('#code')).toBeVisible();
+    expect(sourceRequests).toHaveLength(1);
+    expect(await worker.evaluate(async () => Object.keys(await chrome.storage.session.get(null)))).toEqual([]);
+  });
+}

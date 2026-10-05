@@ -1,16 +1,15 @@
 import { parseContract } from './contract.js';
-import { validateContext, fetchSource } from './github.js';
+import { validateContext } from './github.js';
 
 const trusted = sender => sender.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL(''));
 const documentKey = id => `document:${id}`;
 let writes = Promise.resolve();
 
-async function remember(document, expectedToken) {
+async function remember(document) {
   // Serialize pruning so simultaneous GitHub tabs cannot evict each other's writes.
   const id = crypto.randomUUID();
   writes = writes.catch(() => {}).then(async () => {
     const all = await chrome.storage.session.get(null);
-    if (all.githubToken !== expectedToken) throw new Error('Las credenciales cambiaron durante la lectura. Vuelve a comprobar el archivo.');
     const entries = Object.entries(all).filter(([key]) => key.startsWith('document:')).sort((a, b) => a[1].created - b[1].created);
     let bytes = entries.reduce((sum, [, value]) => sum + JSON.stringify(value).length * 2, 0);
     const size = JSON.stringify(document).length * 2;
@@ -34,11 +33,10 @@ async function handle(message, sender) {
     // asking for the broad "tabs" permission.
     const currentTab = await chrome.tabs.get(sender.tab.id);
     const context = validateContext(message.context, currentTab.url);
-    const { githubToken } = await chrome.storage.session.get('githubToken');
-    const source = await fetchSource(context, githubToken);
-    const result = parseContract(source, context.path);
+    if (typeof message.source !== 'string') throw new Error('GitHub no proporcionó el contenido completo del archivo.');
+    const result = parseContract(message.source, context.path);
     if (!result.detected) return { detected: false };
-    const id = await remember({ context, spec: result.spec, version: result.version, sourceTab: sender.tab.id }, githubToken);
+    const id = await remember({ context, spec: result.spec, version: result.version, sourceTab: sender.tab.id });
     return { detected: true, id, context, version: result.version };
   }
   if (message.type === 'GET_DOCUMENT') {
@@ -55,25 +53,11 @@ async function handle(message, sender) {
     await chrome.tabs.create({ url: chrome.runtime.getURL(`viewer.html?id=${message.id}&theme=${message.theme === 'dark' ? 'dark' : 'light'}`) });
     return {};
   }
-  if (message.type === 'SET_TOKEN') {
-    if (!trusted(sender) || !sender.url.startsWith(chrome.runtime.getURL('popup.html'))) throw new Error('Origen no autorizado.');
-    const token = String(message.token ?? '').trim();
-    if (token && !/^[A-Za-z0-9_]{20,255}$/.test(token)) throw new Error('El token no tiene un formato válido.');
-    writes = writes.catch(() => {}).then(async () => {
-      if (token) await chrome.storage.session.set({ githubToken: token });
-      else await chrome.storage.session.remove('githubToken');
-      // Forget cached private documents when credentials change.
-      const all = await chrome.storage.session.get(null);
-      await chrome.storage.session.remove(Object.keys(all).filter(key => key.startsWith('document:')));
-    });
-    await writes;
-    return { configured: Boolean(token) };
-  }
-  if (message.type === 'TOKEN_STATUS' && trusted(sender)) {
-    return { configured: Boolean((await chrome.storage.session.get('githubToken')).githubToken) };
-  }
   throw new Error('Operación no permitida.');
 }
+
+// Installation/update starts with an empty temporary document cache.
+chrome.runtime.onInstalled.addListener(() => chrome.storage.session.clear());
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   handle(message, sender).then(data => respond({ ok: true, ...data })).catch(error => {

@@ -5,3 +5,5 @@ playwright-report/
 .test-profile/
 github-sample.html
 *.zip
+*.pem
+*.crx

@@ -1,4 +1,4 @@
-import { blobLocation, validateContext } from './github.js';
+import { blobLocation, validateContext, fetchGithubFile } from './github.js';
 
 const PREFIX = 'repocontract';
 let state = { key: '', phase: 'idle', view: 'code' };
@@ -39,23 +39,6 @@ export function readContext() {
   return null;
 }
 
-async function fetchContext(url) {
-  // React may retain initial embeddedData. Only route metadata comes from HTML.
-  const response = await fetch(url, { credentials: 'same-origin', redirect: 'error', cache: 'no-store',
-    headers: { Accept: 'text/html' }, signal: AbortSignal.timeout(15000) });
-  if (!response.ok) throw new Error('No se pudo recuperar el contexto del archivo desde GitHub. Recarga la página.');
-  const html = await response.text();
-  for (const match of html.matchAll(/<script\b[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/gi)) {
-    try {
-      const data = JSON.parse(match[1]);
-      const route = data.payload?.codeViewLayoutRoute ?? data.payload?.codeViewBlobRoute ?? data.payload;
-      if (!route?.refInfo || !route.path) continue;
-      return validateContext({ ...blobLocation(url), path: route.path, ref: route.refInfo.name, sha: route.refInfo.currentOid }, url);
-    } catch { /* No remote HTML is mounted or executed. */ }
-  }
-  throw new Error('GitHub no expuso la ruta y revisión del archivo. Recarga la página e inténtalo otra vez.');
-}
-
 function fileSurface() {
   // Prefer GitHub's file-only wrapper, leaving breadcrumbs and file controls visible.
   // Modern GitHub has a virtualized layer and a transparent textarea alongside
@@ -65,7 +48,8 @@ function fileSurface() {
     document.querySelector('[data-testid="file-viewer"]') ??
     document.querySelector('.react-code-view .react-code-file-contents') ??
     document.querySelector('.react-code-file-contents') ??
-    document.querySelector('.js-file-content') ?? document.querySelector('.blob-wrapper');
+    document.querySelector('.js-file-content') ?? document.querySelector('.blob-wrapper') ??
+    document.querySelector('[class*="BlobContent-module__blobContentSection"]');
 }
 
 function fileControls() {
@@ -152,23 +136,9 @@ async function scan(force = false) {
   }
   if (!location) return;
   if (!fileSurface()) return;
-  let context = readContext() ?? (state.phase === 'ready' ? state.context : null);
-  if (!context && state.phase === 'idle') {
-    state.phase = 'context-loading';
-    const epoch = generation;
-    let failure;
-    try { context = await fetchContext(key); }
-    catch { failure = 'No se pudo recuperar la ruta y revisión desde GitHub. Comprueba la conexión o recarga la página.'; }
-    if (epoch !== generation || blobLocation(window.location.href)?.url !== key) return;
-    if (!context) {
-      state.phase = 'error'; state.error = failure ?? 'No se pudo identificar la revisión del archivo. Recarga GitHub.';
-      showError(state.error); return;
-    }
-    state.phase = 'idle';
-  }
-  if (!context) return;
+  const context = readContext();
   // Also detect a changed revision when GitHub refreshes the same branch URL.
-  if (state.context && state.context.sha !== context.sha) {
+  if (context && state.context && state.context.sha !== context.sha) {
     generation++; cleanup(); state = { key, phase: 'idle', view: 'code' };
   }
   if (state.phase === 'ready') {
@@ -182,8 +152,12 @@ async function scan(force = false) {
   state.phase = 'loading'; state.context = context;
   const epoch = generation;
   let result;
-  try { result = await chrome.runtime.sendMessage({ type: 'READ_CONTRACT', context }); }
-  catch { result = { ok: false, error: 'Recarga GitHub después de instalar o actualizar RepoContract.' }; }
+  try {
+    const file = await fetchGithubFile(key, fetch, context);
+    if (epoch !== generation || blobLocation(window.location.href)?.url !== key) return;
+    result = await chrome.runtime.sendMessage({ type: 'READ_CONTRACT', context: file.context, source: file.source });
+  }
+  catch (error) { result = { ok: false, error: error.message || 'No se pudo leer el archivo abierto en GitHub.' }; }
   if (epoch !== generation || blobLocation(window.location.href)?.url !== key) return;
   if (!result.ok) {
     state.phase = 'error'; state.error = result.error;
