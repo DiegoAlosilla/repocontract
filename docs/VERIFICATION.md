@@ -4,7 +4,7 @@ Ejecutada el **5 de octubre de 2026 UTC** (4 de octubre, America/Lima). Windows,
 
 ## Automatizado
 
-`npm run check`: **13 unitarias y 11 de integración aprobadas**.
+`npm run check`: **13 unitarias y 12 de integración aprobadas**. La comprobación adicional de identidad/empaquetado se realizó el 5 de octubre de 2026, America/Lima.
 
 | Área | Comprobado |
 |---|---|
@@ -21,8 +21,11 @@ Ejecutada el **5 de octubre de 2026 UTC** (4 de octubre, America/Lima). Windows,
 | Solo lectura | Sin Try it out/Authorize; sin solicitudes a endpoint de prueba ni validador |
 | Sesión web | Cookie HttpOnly artificial aplicada automáticamente; solo documentos en caché; lectura denegada conserva código sin ampliar acceso |
 | Permisos | Solo storage y https://github.com/*; ninguna llamada a api.github.com en E2E |
+| Identidad | Dos copias en rutas distintas conservan el ID lcpmdaameifjfcobihelkhohgdfhfdjn en Chromium real |
 
 Las E2E simulan **servidor GitHub y HTML**; content script, worker, parser, renderer, CSP, permisos, APIs Chrome y pestañas son reales. No se reemplaza fetch del worker: ya no hace solicitudes. La cookie artificial vive en el harness, no en la extensión. No demuestra acceso privado real.
+
+El comando `npm run pack` se ejecutó dos veces con la misma clave original: ambos CRX3 conservaron el ID del manifest. Se verificó también que una clave ausente o diferente cancela el empaquetado antes de compilar y conserva el CRX anterior. La clave privada se excluye de Git y del paquete. No se probó instalar el paquete bajo las políticas corporativas.
 
 ## GitHub público real
 

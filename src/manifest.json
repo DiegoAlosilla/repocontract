@@ -13,5 +13,6 @@
   "web_accessible_resources": [{ "resources": ["viewer.html", "viewer.js", "viewer.css", "vendor/swagger-ui-bundle.js", "vendor/swagger-ui.css"], "matches": ["https://github.com/*"] }],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'none'; base-uri 'none'; form-action 'none'"
-  }
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAz8c4JYsBShYXfw5n7qWkPCtT1vfosZfYldME5w+PwnANb6jKlxPVvrV66dsQUqeVNMZHjBb+FA2rqVTUDe8SXTebdK9J5bB+T+RTu4a7XXQvxAX82itTOMhm0igUxroC6CxtQjsymOpCm/p/rdgC9WUbOW0ACHSvT5jZ3VZcbzUy3tGjTyFSlbkvroZkoUpeWo5Gw46444cQAalcai6V5Ijln05M53Ye39DNUkjXkrPN0tpc7I6uzGyUj5rqWrqV3ItJb1ujZpk3toM+LJCdR17D9g8wmJ8o7oZFCYcG0lhNJ66Aa7BzP/zkMNmqJta8g0lNSFtkaEIPoJEscI5jWQIDAQAB"
 }

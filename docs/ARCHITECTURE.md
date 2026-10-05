@@ -25,6 +25,7 @@ flowchart LR
 - `src/viewer.*`: CSS/JavaScript aislados de GitHub. Swagger UI en `dist/vendor` recibe spec como objeto. CSP global y del visor `connect-src 'none'`, imágenes externas bloqueadas y ejecución/validación remota desactivadas.
 - `src/popup.*`: acciones sobre la pestaña activa mediante mensajes; sin configuración de acceso.
 - `scripts/build.mjs`: empaqueta dependencias, copia Swagger UI/licencias y genera iconos locales; sin código remoto durante ejecución.
+- `scripts/pack.mjs` y `identity.mjs`: firma local con Chrome usando exclusivamente la clave original y valida el ID CRX3 antes de reemplazar el paquete. La clave pública queda en manifest; la privada no se incluye en Git o dist. Empaquetado y permisos de instalación corporativa son independientes.
 
 ## Sesión y acceso
 

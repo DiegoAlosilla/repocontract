@@ -19,6 +19,31 @@ Para actualizar: compila, recarga RepoContract en `chrome://extensions` y recarg
 
 En Chrome administrado, la organización puede impedir cargar extensiones desempaquetadas. La instalación requiere un canal autorizado por el administrador; copiar `dist` a una carpeta de Chrome no instala la extensión. Los paquetes y claves de firma locales se excluyen de Git.
 
+## Empaquetar por comandos con ID fijo
+
+La identidad pública de RepoContract está fijada en el manifest:
+
+```text
+lcpmdaameifjfcobihelkhohgdfhfdjn
+```
+
+```powershell
+npm run extension:id
+npm run pack
+# Si la clave original está en otra ubicación:
+npm run pack -- --key "D:\firma\repocontract.pem"
+# Para elegir Chrome explícitamente:
+npm run pack -- --key "D:\firma\repocontract.pem" --chrome "C:\Program Files\Google\Chrome\Application\chrome.exe"
+```
+
+`pack` compila, firma mediante Chrome y comprueba el ID del CRX3 antes de reemplazar `dist.crx`. Usa la clave original `dist.pem` por defecto o `--key`; si falta o no corresponde al manifest, se cancela. Nunca genera una clave nueva. La clave pública del manifest permite conservar también el ID al cargar copias desempaquetadas en otras rutas.
+
+Para distribuir a varias PCs, firma en un equipo autorizado y entrega **el mismo dist.crx** a Helpdesk. Las PCs receptoras no necesitan la clave privada ni volver a empaquetar. Cada versión futura debe usar la misma clave; respáldala por el proceso de TI y no la incluyas en Git ni en el paquete.
+
+Un ID arbitrario ya permitido no puede asignarse escribiéndolo en el manifest. Si Helpdesk quiere usar una identidad de pruebas que controla, debe preparar el manifest con su clave pública y firmar con la clave privada correspondiente dentro de su proceso. El proyecto conserva su identidad propia hasta que se defina ese proceso; copiar una clave pública ajena no permite firmar un CRX con esa identidad.
+
+**ID permitido e instalación son condiciones distintas.** Con `ExtensionInstallBlocklist: ["*"]`, las extensiones desempaquetadas permanecen bloqueadas. El ID del paquete firmado puede autorizarse en la allowlist, pero la instalación fuera de la tienda en Windows depende además del canal/políticas corporativas. El script solo empaqueta; no instala ni cambia políticas. Fuentes: [Chrome: empaquetado y misma clave](https://developer.chrome.com/docs/extensions/how-to/distribute/host-on-linux), [política Blocklist](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/policy/resources/templates/policy_definitions/Extensions/ExtensionInstallBlocklist.yaml), [distribución administrada en Windows](https://support.google.com/chrome/a/answer/7532015).
+
 ## Prueba rápida
 
 Abre [Petstore en GitHub](https://github.com/swagger-api/swagger-petstore/blob/master/src/main/resources/openapi.yaml).

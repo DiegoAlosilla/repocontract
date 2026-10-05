@@ -7,3 +7,4 @@ github-sample.html
 *.zip
 *.pem
 *.crx
+.pack-*/

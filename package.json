@@ -6,6 +6,8 @@
   "description": "Visualiza OpenAPI y Swagger dentro de GitHub, sin salir del archivo.",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "pack": "node scripts/pack.mjs",
+    "extension:id": "node scripts/identity.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "npm run build && playwright test",
     "test:live": "node scripts/live-smoke.mjs",
